@@ -129,8 +129,9 @@ Select an option:
    1) Add a new client
    2) Revoke an existing client
    3) Show client QR code / config path
-   4) Remove WireGuard
-   5) Exit
+   4) Update WireGuard
+   5) Remove WireGuard
+   6) Exit
 ```
 
 | Option | What it does |
@@ -138,6 +139,7 @@ Select an option:
 | **Add** | Generates keys + PSK, applies the peer live with `wg set` (no restart), outputs QR code |
 | **Revoke** | Removes the peer live, wipes the client `.conf` file from the server |
 | **QR** | Re-displays the QR code and config path for any existing client |
+| **Update** | Shows the installed WireGuard version, lists installable package versions, and installs your selected version |
 | **Remove** | Stops the service, purges packages, removes `/etc/wireguard` entirely |
 
 ---
