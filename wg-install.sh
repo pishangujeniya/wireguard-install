@@ -152,6 +152,121 @@ sanitize_name() {
 	sed 's/[^0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-]/_/g' <<< "$1"
 }
 
+get_wireguard_version() {
+	local wg_version package_version
+
+	if command -v wg >/dev/null 2>&1; then
+		wg_version=$(wg --version 2>/dev/null | head -n1)
+	fi
+
+	if command -v dpkg-query >/dev/null 2>&1; then
+		package_version=$(dpkg-query -W -f='${Version}' wireguard-tools 2>/dev/null)
+	elif command -v rpm >/dev/null 2>&1; then
+		package_version=$(rpm -q --qf '%{VERSION}-%{RELEASE}' wireguard-tools 2>/dev/null)
+	fi
+
+	if [[ -n "$wg_version" && -n "$package_version" ]]; then
+		echo "$wg_version (package: $package_version)"
+	elif [[ -n "$wg_version" ]]; then
+		echo "$wg_version"
+	elif [[ -n "$package_version" ]]; then
+		echo "wireguard-tools package $package_version"
+	else
+		echo "unknown"
+	fi
+}
+
+get_wireguard_package_version() {
+	if command -v dpkg-query >/dev/null 2>&1; then
+		dpkg-query -W -f='${Version}' wireguard-tools 2>/dev/null
+	elif command -v rpm >/dev/null 2>&1; then
+		rpm -q --qf '%{VERSION}-%{RELEASE}' wireguard-tools 2>/dev/null
+	fi
+}
+
+list_wireguard_versions() {
+	if [[ "$os" = "debian" || "$os" = "ubuntu" ]]; then
+		apt-get update >/dev/null
+		apt-cache madison wireguard-tools 2>/dev/null \
+			| awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $2); if ($2 != "") print $2}' \
+			| sort -Vr \
+			| uniq
+	else
+		dnf -q --showduplicates list wireguard-tools 2>/dev/null \
+			| awk '/^wireguard-tools/ {print $2}' \
+			| sort -Vr \
+			| uniq
+	fi
+}
+
+install_wireguard_version() {
+	local version="$1"
+
+	if [[ "$os" = "debian" || "$os" = "ubuntu" ]]; then
+		apt-get install -y --allow-downgrades wireguard-tools="$version"
+	else
+		dnf install -y "wireguard-tools-$version"
+	fi
+}
+
+update_wireguard() {
+	local current_version selected_version version version_number
+	local versions=()
+
+	current_version=$(get_wireguard_package_version)
+	echo
+	echo "Current installed version: $(get_wireguard_version)"
+	echo
+	echo "Checking available WireGuard versions..."
+
+	mapfile -t versions < <(list_wireguard_versions)
+
+	if [[ "${#versions[@]}" -eq 0 ]]; then
+		echo
+		echo "No installable WireGuard versions were found in the configured package repositories."
+		return
+	fi
+
+	echo
+	echo "Available versions:"
+	version_number=1
+	for version in "${versions[@]}"; do
+		if [[ "$version" = "$current_version" ]]; then
+			echo "   $version_number) $version (installed)"
+		else
+			echo "   $version_number) $version"
+		fi
+		version_number=$((version_number + 1))
+	done
+	echo "   0) Cancel"
+
+	read -p "Version: " version_number
+	until [[ "$version_number" =~ ^[0-9]+$ && "$version_number" -ge 0 && "$version_number" -le "${#versions[@]}" ]]; do
+		echo "$version_number: invalid selection."
+		read -p "Version: " version_number
+	done
+
+	if [[ "$version_number" -eq 0 ]]; then
+		echo
+		echo "Update aborted!"
+		return
+	fi
+
+	selected_version="${versions[$((version_number - 1))]}"
+	if [[ "$selected_version" = "$current_version" ]]; then
+		echo
+		echo "Version $selected_version is already installed."
+		return
+	fi
+
+	echo
+	echo "Updating WireGuard to version $selected_version..."
+	install_wireguard_version "$selected_version"
+	echo
+	echo "WireGuard update finished."
+	echo "Installed version: $(get_wireguard_version)"
+}
+
 # ── Fresh Install ─────────────────────────────────────────────────────────────
 
 if [[ ! -e "$WG_CONF" ]]; then
@@ -393,6 +508,7 @@ EOF
 
 	echo
 	echo "Finished! WireGuard is running."
+	echo "Installed version: $(get_wireguard_version)"
 	show_qr "$first_client"
 
 # ── Management Menu ───────────────────────────────────────────────────────────
@@ -400,15 +516,17 @@ EOF
 else
 	clear
 	echo "WireGuard is already installed."
+	echo "Installed version: $(get_wireguard_version)"
 	echo
 	echo "Select an option:"
 	echo "   1) Add a new client"
 	echo "   2) Revoke an existing client"
 	echo "   3) Show client QR code / config path"
-	echo "   4) Remove WireGuard"
-	echo "   5) Exit"
+	echo "   4) Update WireGuard"
+	echo "   5) Remove WireGuard"
+	echo "   6) Exit"
 	read -p "Option: " option
-	until [[ "$option" =~ ^[1-5]$ ]]; do
+	until [[ "$option" =~ ^[1-6]$ ]]; do
 		echo "$option: invalid selection."
 		read -p "Option: " option
 	done
@@ -502,6 +620,10 @@ else
 		;;
 
 		4)
+			update_wireguard
+		;;
+
+		5)
 			echo
 			read -p "Confirm WireGuard removal? [y/N]: " remove
 			until [[ "$remove" =~ ^[yYnN]*$ ]]; do
@@ -523,6 +645,6 @@ else
 			fi
 		;;
 
-		5) exit ;;
+		6) exit ;;
 	esac
 fi
